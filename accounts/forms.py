@@ -57,6 +57,23 @@ class EmailLoginForm(AuthenticationForm):
         label="Email",
         widget=forms.EmailInput(attrs={"autofocus": True, "placeholder": "you@example.com"}),
     )
+    captcha = forms.CharField(
+        label="Captcha",
+        max_length=5,
+        help_text="Enter the characters shown in the image.",
+        widget=forms.TextInput(attrs={"placeholder": "Enter captcha"}),
+    )
+
+    def clean_captcha(self):
+        entered = self.cleaned_data.get("captcha", "").strip().upper()
+        expected = ""
+        if self.request is not None:
+            expected = self.request.session.get("login_captcha", "").strip().upper()
+
+        if not expected or entered != expected:
+            raise forms.ValidationError("Invalid captcha. Please try again.")
+
+        return entered
 
 
 # ---------------------------------------------------------------------------

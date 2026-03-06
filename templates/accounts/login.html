@@ -1,24 +1,164 @@
 {% extends "base.html" %}
-{% load crispy_forms_tags %}
+{% load crispy_forms_tags static %}
 
-{% block title %}Login — ShopProject{% endblock %}
+{% block title %}Login - ShopProject{% endblock %}
 
 {% block content %}
 <div class="row justify-content-center">
-    <div class="col-md-5">
+    <div class="col-md-6 col-lg-5">
         <div class="card shadow-sm">
             <div class="card-body p-4">
                 <h2 class="card-title text-center mb-4">Sign In</h2>
-                <form method="post">
-                    {% csrf_token %}
-                    {{ form|crispy }}
-                    <button class="btn btn-primary w-100 mt-3" type="submit">Login</button>
-                </form>
+
+                <div class="btn-group w-100 mb-3" role="group" aria-label="Login mode selector">
+                    <button type="button" class="btn btn-primary active" id="password-mode-btn">Password Login</button>
+                    <button type="button" class="btn btn-outline-primary" id="face-mode-btn">Face Login</button>
+                </div>
+
+                <div id="password-login-panel">
+                    <form method="post">
+                        {% csrf_token %}
+                        {{ form|crispy }}
+                        <div class="border rounded bg-light p-2 mt-2">
+                            <div class="d-flex align-items-center justify-content-between">
+                                <img
+                                    id="login-captcha-image"
+                                    src="{% url 'accounts:captcha_image' %}"
+                                    alt="Captcha image"
+                                    width="140"
+                                    height="48"
+                                    class="rounded border"
+                                >
+                                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="refreshCaptcha()">
+                                    Refresh
+                                </button>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary w-100 mt-3" type="submit">Login</button>
+                    </form>
+                </div>
+
+                <div id="face-login-panel" class="d-none">
+                    <div class="mb-2">
+                        <label for="face-login-email" class="form-label">Email (Optional)</label>
+                        <input type="email" id="face-login-email" class="form-control" placeholder="Leave blank to match all enrolled faces">
+                    </div>
+                    <video id="face-video" class="w-100 border rounded" autoplay muted playsinline style="max-height: 260px;"></video>
+                    <button type="button" class="btn btn-outline-secondary w-100 mt-2" id="start-camera-btn">Start Camera</button>
+                    <button type="button" class="btn btn-primary w-100 mt-2" id="face-login-btn">Login with Face</button>
+                    <div class="small text-muted mt-2">
+                        Face login requires enrollment after your first password login.
+                    </div>
+                </div>
+
                 <p class="text-center mt-3 mb-0">
                     Don't have an account? <a href="{% url 'accounts:register' %}">Register</a>
+                </p>
+                <p class="text-center mt-2 mb-0">
+                    <a href="{% url 'accounts:password_forgot' %}">Forgot password?</a>
                 </p>
             </div>
         </div>
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script>
+function refreshCaptcha() {
+    const captchaImage = document.getElementById("login-captcha-image");
+    captchaImage.src = "{% url 'accounts:captcha_image' %}?t=" + Date.now();
+}
+
+const passwordModeBtn = document.getElementById("password-mode-btn");
+const faceModeBtn = document.getElementById("face-mode-btn");
+const passwordPanel = document.getElementById("password-login-panel");
+const facePanel = document.getElementById("face-login-panel");
+
+function setMode(mode) {
+    const isFace = mode === "face";
+    passwordPanel.classList.toggle("d-none", isFace);
+    facePanel.classList.toggle("d-none", !isFace);
+    passwordModeBtn.classList.toggle("active", !isFace);
+    faceModeBtn.classList.toggle("active", isFace);
+    passwordModeBtn.classList.toggle("btn-primary", !isFace);
+    passwordModeBtn.classList.toggle("btn-outline-primary", isFace);
+    faceModeBtn.classList.toggle("btn-primary", isFace);
+    faceModeBtn.classList.toggle("btn-outline-primary", !isFace);
+}
+
+passwordModeBtn.addEventListener("click", () => setMode("password"));
+faceModeBtn.addEventListener("click", () => setMode("face"));
+
+const videoElement = document.getElementById("face-video");
+const startCameraBtn = document.getElementById("start-camera-btn");
+const faceLoginBtn = document.getElementById("face-login-btn");
+let modelReady = false;
+
+function getCsrfToken() {
+    const tokenInput = document.querySelector("input[name=csrfmiddlewaretoken]");
+    return tokenInput ? tokenInput.value : "";
+}
+
+async function loadFaceModels() {
+    if (modelReady) {
+        return;
+    }
+    await faceapi.nets.tinyFaceDetector.loadFromUri("{% static 'faceapi/models' %}");
+    await faceapi.nets.faceRecognitionNet.loadFromUri("{% static 'faceapi/models' %}");
+    await faceapi.nets.faceLandmark68Net.loadFromUri("{% static 'faceapi/models' %}");
+    modelReady = true;
+}
+
+startCameraBtn.addEventListener("click", async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        videoElement.srcObject = stream;
+    } catch (error) {
+        alert("Unable to access camera.");
+    }
+});
+
+faceLoginBtn.addEventListener("click", async () => {
+    const email = document.getElementById("face-login-email").value.trim();
+
+    try {
+        await loadFaceModels();
+    } catch (error) {
+        alert("Face model files are missing. Put them under static/faceapi/models/.");
+        return;
+    }
+
+    const detection = await faceapi
+        .detectSingleFace(videoElement, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+    if (!detection) {
+        alert("No face detected. Please center your face in the camera.");
+        return;
+    }
+
+    const response = await fetch("{% url 'accounts:face_login' %}", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": getCsrfToken(),
+        },
+        body: JSON.stringify({
+            email,
+            descriptor: Array.from(detection.descriptor),
+        }),
+    });
+
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+        alert(result.message || "Face login failed.");
+        return;
+    }
+
+    window.location.href = result.redirect_url;
+});
+</script>
 {% endblock %}

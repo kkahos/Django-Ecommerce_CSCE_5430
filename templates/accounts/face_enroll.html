@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Face Enrollment - ShopProject{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-7 col-lg-6">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <h2 class="card-title mb-3">Face Enrollment</h2>
+                <p class="text-muted mb-3">
+                    Capture your face once. After enrollment, you can use face login on the sign-in page.
+                </p>
+                {% if has_enrolled %}
+                <div class="alert alert-success">
+                    You already have a face profile. Capturing again will overwrite the existing profile.
+                </div>
+                {% endif %}
+                <video id="enroll-video" class="w-100 border rounded" autoplay muted playsinline style="max-height: 320px;"></video>
+                <button type="button" class="btn btn-outline-secondary w-100 mt-2" id="enroll-start-camera-btn">Start Camera</button>
+                <button type="button" class="btn btn-primary w-100 mt-2" id="enroll-save-btn">Save Face Profile</button>
+                <p class="small text-muted mt-3 mb-0">
+                    If model loading fails, download the face-api.js TinyFaceDetector, FaceRecognitionNet,
+                    and FaceLandmark68Net models to <code>static/faceapi/models/</code>.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script>
+const enrollVideo = document.getElementById("enroll-video");
+const enrollStartCameraBtn = document.getElementById("enroll-start-camera-btn");
+const enrollSaveBtn = document.getElementById("enroll-save-btn");
+let enrollModelReady = false;
+
+function enrollCsrfToken() {
+    const cookie = document.cookie
+        .split("; ")
+        .find((row) => row.startsWith("csrftoken="));
+    return cookie ? cookie.split("=")[1] : "";
+}
+
+async function loadEnrollModels() {
+    if (enrollModelReady) {
+        return;
+    }
+    await faceapi.nets.tinyFaceDetector.loadFromUri("{% static 'faceapi/models' %}");
+    await faceapi.nets.faceRecognitionNet.loadFromUri("{% static 'faceapi/models' %}");
+    await faceapi.nets.faceLandmark68Net.loadFromUri("{% static 'faceapi/models' %}");
+    enrollModelReady = true;
+}
+
+enrollStartCameraBtn.addEventListener("click", async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+        enrollVideo.srcObject = stream;
+    } catch (error) {
+        alert("Unable to access camera.");
+    }
+});
+
+enrollSaveBtn.addEventListener("click", async () => {
+    try {
+        await loadEnrollModels();
+    } catch (error) {
+        alert("Face model files are missing. Put them under static/faceapi/models/.");
+        return;
+    }
+
+    const detection = await faceapi
+        .detectSingleFace(enrollVideo, new faceapi.TinyFaceDetectorOptions())
+        .withFaceLandmarks()
+        .withFaceDescriptor();
+
+    if (!detection) {
+        alert("No face detected. Please center your face in the camera.");
+        return;
+    }
+
+    const response = await fetch("{% url 'accounts:face_enroll' %}", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            "X-CSRFToken": enrollCsrfToken(),
+        },
+        body: JSON.stringify({ descriptor: Array.from(detection.descriptor) }),
+    });
+
+    const result = await response.json();
+    if (!response.ok || !result.ok) {
+        alert(result.message || "Face enrollment failed.");
+        return;
+    }
+    alert("Face enrollment saved successfully.");
+});
+</script>
+{% endblock %}

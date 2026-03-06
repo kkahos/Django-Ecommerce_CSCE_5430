@@ -208,3 +208,22 @@ class Administrator(User):
     def save(self, *args, **kwargs):
         self.role = User.Role.ADMINISTRATOR
         super().save(*args, **kwargs)
+
+
+class FaceCredential(models.Model):
+    """Stores one face descriptor per user for face login."""
+
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="face_credential",
+    )
+    descriptor = models.JSONField(default=list, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "face credential"
+        verbose_name_plural = "face credentials"
+
+    def __str__(self):
+        return f"Face credential for {self.user.email}"

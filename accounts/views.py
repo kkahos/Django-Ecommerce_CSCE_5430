@@ -1,11 +1,22 @@
+import io
+import json
+import math
+import random
+
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.views import LoginView, LogoutView
+from django.conf import settings
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.urls import reverse
+from django.views.decorators.http import require_POST
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .decorators import merchant_required
 from .forms import EmailLoginForm, ProfileUpdateForm, UserRegistrationForm
+from .models import FaceCredential, User
 
 
 # ---------------------------------------------------------------------------
@@ -35,6 +46,128 @@ class EmailLoginView(LoginView):
 
 class UserLogoutView(LogoutView):
     next_page = "products:home"
+
+
+def _validate_descriptor(raw_descriptor):
+    if not isinstance(raw_descriptor, list):
+        raise ValueError("Descriptor must be a list.")
+    if len(raw_descriptor) < 64 or len(raw_descriptor) > 512:
+        raise ValueError("Descriptor length is invalid.")
+    descriptor = [float(value) for value in raw_descriptor]
+    return descriptor
+
+
+def _euclidean_distance(first, second):
+    return math.sqrt(sum((x - y) ** 2 for x, y in zip(first, second)))
+
+
+def captcha_image(request):
+    """Generate a captcha image for login and store text in session."""
+    code = "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
+    request.session["login_captcha"] = code
+
+    width, height = 140, 48
+    image = Image.new("RGB", (width, height), color=(248, 249, 250))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+
+    for _ in range(6):
+        draw.line(
+            (
+                random.randint(0, width),
+                random.randint(0, height),
+                random.randint(0, width),
+                random.randint(0, height),
+            ),
+            fill=(150, 150, 150),
+            width=1,
+        )
+
+    for index, char in enumerate(code):
+        x = 15 + index * 22 + random.randint(-2, 2)
+        y = 14 + random.randint(-4, 4)
+        draw.text((x, y), char, font=font, fill=(40, 40, 40))
+
+    for _ in range(120):
+        draw.point(
+            (random.randint(0, width - 1), random.randint(0, height - 1)),
+            fill=(random.randint(100, 220), random.randint(100, 220), random.randint(100, 220)),
+        )
+
+    image = image.filter(ImageFilter.SMOOTH)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+
+    response = HttpResponse(buffer.getvalue(), content_type="image/png")
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    response["Expires"] = "0"
+    return response
+
+
+@require_POST
+def face_login(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        email = payload.get("email", "").strip()
+        descriptor = _validate_descriptor(payload.get("descriptor"))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "message": "Invalid face login payload."}, status=400)
+
+    credentials = FaceCredential.objects.select_related("user").all()
+    if email:
+        credentials = credentials.filter(user__email__iexact=email)
+
+    candidates = []
+    for credential in credentials:
+        stored = credential.descriptor or []
+        if len(stored) != len(descriptor):
+            continue
+        distance = _euclidean_distance(stored, descriptor)
+        candidates.append((distance, credential.user))
+
+    if not candidates:
+        if email:
+            return JsonResponse(
+                {"ok": False, "message": "No enrolled face found for this email. Please enroll first."},
+                status=400,
+            )
+        return JsonResponse(
+            {"ok": False, "message": "No enrolled faces found. Please enroll your face first."},
+            status=400,
+        )
+
+    distance, user = min(candidates, key=lambda item: item[0])
+    threshold = getattr(settings, "FACE_LOGIN_DISTANCE_THRESHOLD", 0.60)
+    if distance > threshold:
+        message = "Face not recognized. Try better lighting/angle, or re-enroll your face."
+        if settings.DEBUG:
+            message = f"{message} (distance={distance:.3f}, threshold={threshold:.3f})"
+        return JsonResponse({"ok": False, "message": message}, status=401)
+
+    login(request, user, backend="accounts.backends.EmailBackend")
+    return JsonResponse({"ok": True, "redirect_url": reverse("products:home")})
+
+
+@login_required
+def face_enroll_page(request):
+    has_enrolled = hasattr(request.user, "face_credential") and bool(request.user.face_credential.descriptor)
+    return render(request, "accounts/face_enroll.html", {"has_enrolled": has_enrolled})
+
+
+@login_required
+@require_POST
+def face_enroll(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+        descriptor = _validate_descriptor(payload.get("descriptor"))
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JsonResponse({"ok": False, "message": "Invalid face descriptor."}, status=400)
+
+    credential, _ = FaceCredential.objects.get_or_create(user=request.user)
+    credential.descriptor = descriptor
+    credential.save(update_fields=["descriptor", "updated_at"])
+    return JsonResponse({"ok": True, "message": "Face enrolled successfully."})
 
 
 # ---------------------------------------------------------------------------

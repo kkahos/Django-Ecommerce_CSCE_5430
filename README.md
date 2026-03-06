@@ -53,6 +53,25 @@ python manage.py seed_products
 
 Visit `http://127.0.0.1:8000/` for the storefront and `http://127.0.0.1:8000/admin/` for the admin panel.
 
+## Face Login (face-api.js)
+
+This project supports two login modes on `/accounts/login/`:
+- Password + captcha login
+- Face login (email + face descriptor)
+
+Before face login, each user must enroll once at `/accounts/face-enroll/` after normal login.
+
+### Required model files
+
+Download face-api.js model files and put them under:
+
+`static/faceapi/models/`
+
+At minimum, include:
+- TinyFaceDetector model
+- FaceLandmark68Net model
+- FaceRecognitionNet model
+
 ## Project Structure
 
 ```

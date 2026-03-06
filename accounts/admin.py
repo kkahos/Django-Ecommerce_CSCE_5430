@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Administrator, Merchant, Shopper, User
+from .models import Administrator, FaceCredential, Merchant, Shopper, User
 
 
 @admin.register(User)
@@ -47,3 +47,10 @@ class MerchantAdmin(UserAdmin):
 class AdministratorAdmin(UserAdmin):
     def get_queryset(self, request):
         return super().get_queryset(request).filter(role=User.Role.ADMINISTRATOR)
+
+
+@admin.register(FaceCredential)
+class FaceCredentialAdmin(admin.ModelAdmin):
+    list_display = ("user", "updated_at")
+    search_fields = ("user__email",)
+    readonly_fields = ("updated_at",)

@@ -18,6 +18,9 @@
                     {% csrf_token %}
                     {{ form|crispy }}
                     <button class="btn btn-primary mt-2" type="submit">Save Changes</button>
+                    <a href="{% url 'accounts:face_enroll_page' %}" class="btn btn-outline-primary mt-2">
+                        Enroll Face Login
+                    </a>
                 </form>
             </div>
         </div>
