@@ -7,7 +7,7 @@ from bookmarks.models import Bookmark
 
 from .forms import ReviewForm
 from .models import Category, Product, Review
-
+from orders.models import OrderItem, Order
 
 def home(request):
     featured = Product.objects.filter(is_active=True).select_related("inventory")[:8]
@@ -40,7 +40,7 @@ def product_list(request):
     )
 
 
-def product_detail(request, slug):
+'''def product_detail(request, slug):
     product = get_object_or_404(
         Product.objects.select_related("inventory", "merchant", "category"),
         slug=slug,
@@ -73,10 +73,88 @@ def product_detail(request, slug):
         "is_bookmarked": is_bookmarked,
     }
     return render(request, "products/product_detail.html", context)
+'''
+def product_detail(request, slug):
+    product = get_object_or_404(
+        Product.objects.select_related("inventory", "merchant", "category"),
+        slug=slug,
+        is_active=True,
+    )
+    reviews = product.reviews.select_related("user").all()
+    related = (
+        Product.objects.filter(category=product.category, is_active=True)
+        .exclude(pk=product.pk)[:4]
+    )
 
+    user_review = None
+    review_form = None
+    review_message = None
+    is_bookmarked = False
+
+    if request.user.is_authenticated:
+        user_review = product.reviews.filter(user=request.user).first()
+
+        has_purchased = OrderItem.objects.filter(
+            order__user=request.user,
+            product=product,
+            order__status=Order.Status.DELIVERED,
+        ).exists()
+
+        if not user_review and has_purchased:
+            review_form = ReviewForm()
+        elif not user_review and not has_purchased:
+            review_message = "Only customers who purchased and received this product can leave a review."
+
+        is_bookmarked = Bookmark.objects.filter(
+            user=request.user, product=product
+        ).exists()
+
+    context = {
+        "product": product,
+        "reviews": reviews,
+        "related": related,
+        "review_form": review_form,
+        "user_review": user_review,
+        "review_message": review_message,
+        "is_bookmarked": is_bookmarked,
+    }
+    return render(request, "products/product_detail.html", context)
 
 @login_required
 def submit_review(request, slug):
+    """Handle review form submission (POST only)."""
+    product = get_object_or_404(Product, slug=slug, is_active=True)
+
+    if request.method != "POST":
+        return redirect("products:product_detail", slug=slug)
+
+    # Prevent duplicate reviews
+    if Review.objects.filter(product=product, user=request.user).exists():
+        messages.warning(request, "You have already reviewed this product.")
+        return redirect("products:product_detail", slug=slug)
+
+    has_purchased = OrderItem.objects.filter(
+        order__user=request.user,
+        product=product,
+        order__status=Order.Status.DELIVERED,
+    ).exists()
+
+    if not has_purchased:
+        messages.error(request, "Only customers who purchased and received this product can leave a review.")
+        return redirect("products:product_detail", slug=slug)
+
+    form = ReviewForm(request.POST)
+    if form.is_valid():
+        review = form.save(commit=False)
+        review.product = product
+        review.user = request.user
+        review.save()
+        messages.success(request, "Your review has been submitted!")
+    else:
+        messages.error(request, "Please correct the errors below.")
+
+    return redirect("products:product_detail", slug=slug)
+'''def submit_review(request, slug):
     """Handle review form submission (POST only)."""
     product = get_object_or_404(Product, slug=slug, is_active=True)
 
@@ -96,7 +174,7 @@ def submit_review(request, slug):
         else:
             messages.error(request, "Please correct the errors below.")
 
-    return redirect("products:product_detail", slug=slug)
+    return redirect("products:product_detail", slug=slug)'''
 
 
 def category_detail(request, slug):
